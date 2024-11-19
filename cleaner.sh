@@ -1,72 +1,70 @@
 #!/bin/bash
 
-echo "Starting system cleanup and optimization..."
+set -euo pipefail
 
-# Function to run commands with sudo and handle errors
-run_with_sudo() {
-    if ! sudo $1; then
-        echo "Error executing: $1"
-        exit 1
-    fi
+echo "Starting Ubuntu system cleanup and optimization..."
+
+# Ensure the script runs as root
+if [ "$EUID" -ne 0 ]; then
+    echo "Please run this script as root (e.g., using sudo)."
+    exit 1
+fi
+
+# Function to log and run commands
+run() {
+    echo "Executing: $*"
+    $@
 }
 
-# 1. Update the package lists and upgrade installed packages
+# 1. Update and upgrade the system
 echo "Updating and upgrading system packages..."
-run_with_sudo "apt update -y && apt upgrade -y"
+run apt update -y
+run apt upgrade -y
 
-# 2. Remove unnecessary packages and dependencies
-echo "Removing unnecessary packages..."
-run_with_sudo "apt autoremove -y && apt autoclean -y"
+# 2. Clean up unnecessary packages and dependencies
+echo "Cleaning up unnecessary packages..."
+run apt autoremove -y
+run apt autoclean -y
+run apt clean -y
 
-# 3. Clean apt cache
-echo "Cleaning up APT cache..."
-run_with_sudo "apt clean"
-
-# 4. Remove temporary files
+# 3. Remove temporary files
 echo "Removing temporary files..."
-run_with_sudo "rm -rf /tmp/*"
-run_with_sudo "rm -rf /var/tmp/*"
+run rm -rf /tmp/*
+run rm -rf /var/tmp/*
 
-# 5. Clear system logs (optional, be cautious)
-echo "Clearing system logs..."
-run_with_sudo "find /var/log -type f -name '*.log' -exec truncate -s 0 {} \;"
-
-# 6. Clear user cache
+# 4. Clear user cache
 echo "Clearing user cache..."
-rm -rf ~/.cache/*
+rm -rf /home/*/.cache/* || true
+rm -rf /root/.cache/* || true
 
-# 7. Clear old kernels (be cautious with this step!)
-echo "Removing old kernels..."
-run_with_sudo "dpkg --list | grep 'linux-image' | awk '{ print $2 }' | grep -v $(uname -r) | xargs sudo apt purge -y"
+# 5. Clear system logs
+echo "Truncating system log files..."
+find /var/log -type f -name "*.log" -exec truncate -s 0 {} \;
+
+# 6. Remove old kernels
+echo "Removing old kernels (except the current one)..."
+run apt purge -y $(dpkg --list | awk '{ print $2 }' | grep -E 'linux-image-[0-9]' | grep -v "$(uname -r)")
+
+# 7. Clear Snap package cache
+echo "Cleaning unused Snap revisions..."
+snap list --all | awk '/disabled/{print $1, $3}' | while read snapname revision; do
+    run snap remove "$snapname" --revision="$revision"
+done
 
 # 8. Optimize swap usage
-echo "Optimizing swap usage..."
-run_with_sudo "swapoff -a && swapon -a"
+echo "Refreshing swap space..."
+run swapoff -a
+run swapon -a
 
-# 9. Disable unnecessary startup services (optional)
-echo "Disabling unnecessary startup services..."
-run_with_sudo "systemctl disable cups" # Example: Disable printer services
-run_with_sudo "systemctl disable bluetooth" # Disable Bluetooth if not used
+# 9. Disable unnecessary services (optional)
+echo "Disabling unnecessary services..."
+run systemctl disable cups 2>/dev/null || true  # Disable printer service if not used
+run systemctl disable bluetooth 2>/dev/null || true  # Disable Bluetooth if not used
 
-# 10. Remove orphaned packages
-echo "Removing orphaned packages..."
-run_with_sudo "deborphan | xargs sudo apt purge -y"
+# 10. Clear thumbnail cache
+echo "Clearing thumbnail cache..."
+rm -rf /home/*/.cache/thumbnails/* || true
 
-# 11. Free up disk space from unused Snap packages
-echo "Cleaning unused Snap packages..."
-run_with_sudo "snap list --all | awk '/disabled/{print $1, $3}' | while read snapname revision; do sudo snap remove $snapname --revision=$revision; done"
-
-# 12. Clear DNS cache
-echo "Clearing DNS cache..."
-run_with_sudo "systemd-resolve --flush-caches"
-
-# 13. Clear thumbnails cache
-echo "Clearing thumbnails cache..."
-rm -rf ~/.cache/thumbnails/*
-
-# 14. Reboot suggestion
-echo "Cleanup completed! For full effect, consider rebooting your system."
-
-# Done
+# Final message
 echo "System cleanup and optimization complete!"
-
+echo "For maximum effect, consider rebooting the system."
